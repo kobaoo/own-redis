@@ -6,12 +6,14 @@ import (
 	"own-redis/internal/config"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Server struct {
 	Conn net.PacketConn
 	Storage map[string]Value
+	mtx sync.Mutex
 }
 
 type Value struct {
@@ -56,7 +58,7 @@ func (s *Server) HandleRequest() {
 func (s *Server) processCommand(req string) string {
 	args := strings.Split(req, " ")
 	if len(args) == 0 {
-		return "(error) empty command"
+		return "(error) empty command\n"
 	}
 
 	switch strings.ToLower(args[0]) {
@@ -64,6 +66,8 @@ func (s *Server) processCommand(req string) string {
 		return "PONG\n"
 	case "set":
 		return s.handleSet(args)
+	case "get":
+		return s.handleGet(args)
 	}
 
 	return "(error) something went wrong\n"
@@ -71,20 +75,36 @@ func (s *Server) processCommand(req string) string {
 
 func (s *Server) handleSet(args []string) string{
 	if len(args) < 3 {
-		return "(error) ERR wrong number of arguments for 'SET' command"
+		return "(error) ERR wrong number of arguments for 'SET' command\n"
 	}
 	var val = Value{ExpiresAt: time.Time{}}
 	lenArgs := len(args)
 	if strings.ToLower(args[lenArgs-2]) == "px" {
 		ms, err := strconv.Atoi(args[lenArgs-1])
 		if err != nil {
-			return fmt.Sprintf("(error) ERR %s", err)
+			return fmt.Sprintf("(error) ERR %s\n", err)
 		}
 		lenArgs = lenArgs-2
 		val.ExpiresAt = time.Now().Add(time.Duration(ms)*time.Millisecond)
 	}
 	val.Data = strings.Join(args[2:lenArgs], " ")
+	s.mtx.Lock()	
 	s.Storage[args[1]] = val
-	
-	return "OK"
+	s.mtx.Unlock()
+	return "OK\n"
+}
+
+func (s *Server) handleGet(args []string) string{
+	if len(args) != 2 {
+		return "(error) ERR wrong number of arguments for 'GET' command\n"
+	}
+	s.mtx.Lock()
+	val, ok := s.Storage[args[1]]
+	if !ok || (!val.ExpiresAt.IsZero() && time.Now().After(val.ExpiresAt)) {
+		delete(s.Storage, args[1])
+		s.mtx.Unlock()
+		return "(nil)\n"
+	}
+	s.mtx.Unlock()
+	return val.Data+"\n"
 }
