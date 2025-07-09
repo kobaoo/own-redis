@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"own-redis/internal/config"
 	"own-redis/internal/server"
@@ -12,10 +13,11 @@ func main() {
 		log.Fatal("Failed during flag parsing", err)
 	}
 
-	server, err := server.NewServer()
+	srv, err := server.NewServer()
 	if err != nil {
 		log.Fatal("Error initializing new server")
 	}
+	fmt.Println("UDP server is running on port:", config.Port)
 
-	
+	srv.HandleRequest()
 }

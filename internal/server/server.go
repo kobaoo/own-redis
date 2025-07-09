@@ -4,17 +4,19 @@ import (
 	"fmt"
 	"net"
 	"own-redis/internal/config"
+	"strconv"
+	"strings"
 	"time"
 )
 
 type Server struct {
-	conn net.PacketConn
-	storage map[string]Value
+	Conn net.PacketConn
+	Storage map[string]Value
 }
 
 type Value struct {
-	data string
-	expiresAt time.Time
+	Data string
+	ExpiresAt time.Time
 }
 
 func NewServer() (*Server, error){
@@ -22,10 +24,67 @@ func NewServer() (*Server, error){
 	if err != nil {
 		return nil, err
 	}
-	defer conn.Close()
 
 	return &Server{
-		conn: conn,
-		storage: make(map[string]Value),
+		Conn: conn,
+		Storage: make(map[string]Value),
 	}, nil
+}
+
+
+func (s *Server) HandleRequest() {
+	defer s.Conn.Close()
+	for {
+		buf := make([]byte, 1024)
+		n, addr, err := s.Conn.ReadFrom(buf)
+		if err != nil {
+			fmt.Println("Error reading request:", err)
+			continue
+		}
+		request := strings.TrimSpace(string(buf[:n]))
+		fmt.Println("Received from", addr, ":", request)
+
+		response := s.processCommand(request)
+		
+		_, err 	= s.Conn.WriteTo([]byte(response), addr)
+		if err != nil {
+			fmt.Println("Error sending response:", err)
+		}
+	}
+}
+
+func (s *Server) processCommand(req string) string {
+	args := strings.Split(req, " ")
+	if len(args) == 0 {
+		return "(error) empty command"
+	}
+
+	switch strings.ToLower(args[0]) {
+	case "ping":
+		return "PONG\n"
+	case "set":
+		return s.handleSet(args)
+	}
+
+	return "(error) something went wrong\n"
+}
+
+func (s *Server) handleSet(args []string) string{
+	if len(args) < 3 {
+		return "(error) ERR wrong number of arguments for 'SET' command"
+	}
+	var val = Value{ExpiresAt: time.Time{}}
+	lenArgs := len(args)
+	if strings.ToLower(args[lenArgs-2]) == "px" {
+		ms, err := strconv.Atoi(args[lenArgs-1])
+		if err != nil {
+			return fmt.Sprintf("(error) ERR %s", err)
+		}
+		lenArgs = lenArgs-2
+		val.ExpiresAt = time.Now().Add(time.Duration(ms)*time.Millisecond)
+	}
+	val.Data = strings.Join(args[2:lenArgs], " ")
+	s.Storage[args[1]] = val
+	
+	return "OK"
 }
